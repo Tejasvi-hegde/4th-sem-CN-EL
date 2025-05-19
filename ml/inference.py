@@ -1,7 +1,8 @@
 import numpy as np
 import joblib
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # Disable GPU if not needed
 import tensorflow as tf
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from typing import Dict, Optional
@@ -18,19 +19,28 @@ class CCASelector:
         
     def _load_artifacts(self):
         """Load preprocessing artifacts and model"""
+        base_path = "/home/tejasvi/Desktop/CN EL 4th sem/models/"
         try:
             # Load scaler and label encoder
-            self.scaler = joblib.load('models/scaler.pkl')
-            self.le = joblib.load('models/label_encoder.pkl')
+            print(f"Loading scaler from: {base_path}scaler.pkl")  # Debug
+            self.scaler = joblib.load(base_path + 'scaler.pkl')
+
+            
+            
+            print(f"Loading encoder from: {base_path}label_encoder.pkl")  # Debug
+            self.le = joblib.load(base_path + 'label_encoder.pkl')
             
             # Load appropriate model
             if self.model_type == 'rf':
-                self.model = joblib.load('models/rf_model.pkl')
+                print(f"Loading model from: {base_path}rf_model.pkl")  # Debug
+                self.model = joblib.load(base_path + 'rf_model.pkl')
             elif self.model_type == 'lstm':
-                self.model = tf.keras.models.load_model('models/lstm_model.keras')
+                self.model = tf.keras.models.load_model('home/tejasvi/Desktop/CN EL 4th sem/models/lstm_model.keras')
             else:
                 raise ValueError(f"Unknown model type: {self.model_type}")
                 
+            
+                    
         except FileNotFoundError as e:
             raise RuntimeError("Model artifacts not found. Train models first!") from e
 

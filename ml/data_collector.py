@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.query_api import QueryApi
+from pathlib import Path
 
 class CCADataCollector:
     def __init__(self):
@@ -22,14 +23,26 @@ class CCADataCollector:
     def _query_influx(self, query):
         """Execute Flux query and return DataFrame"""
         try:
+            # Handle case where query returns multiple tables
             result = self.query_api.query_data_frame(query)
-            if not result.empty:
-                # Convert timestamps and set index
-                result['_time'] = pd.to_datetime(result['_time'])
-                return result.set_index('_time')
-            return pd.DataFrame()
+            
+            if isinstance(result, list):
+                # Concatenate multiple tables
+                df = pd.concat(result, ignore_index=True)
+            else:
+                df = result
+
+            if not df.empty and '_time' in df.columns:
+                df['_time'] = pd.to_datetime(df['_time'])
+                df.set_index('_time', inplace=True)
+                df = df.sort_index().reset_index().drop_duplicates('_time').set_index('_time')
+                return df
+            else:
+                print("Warning: Query returned empty or invalid data")
+                return pd.DataFrame()
+
         except Exception as e:
-            print(f"Query failed: {e}")
+            print(f"Query failed: {str(e)}")
             return pd.DataFrame()
 
     def get_raw_metrics(self):
@@ -41,11 +54,26 @@ class CCADataCollector:
           |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
         '''
         return self._query_influx(query)
+    
+    # In data_collector.py
+    def calculate_performance(self):
+        """Calculate current network performance score (0-1)"""
+        metrics = self.get_live_metrics()
+        if not metrics:
+            return 0.0
+            
+        # Simple performance metric (adjust weights as needed)
+        score = 0.7 * (metrics['throughput']/1000) +  0.2 * (1 - metrics['loss']/100) +  0.1 * (1 - metrics['rtt']/500)       
+                
+        return max(0.0, min(1.0, score))  # Clamp to 0-1 range
 
     def calculate_features(self, df):
         """Feature engineering pipeline"""
         if df.empty:
             return df
+
+        # Sort index first
+        df = df.sort_index()
 
         # Base features
         features = df[['rtt', 'throughput', 'loss', 'retransmits']].copy()
@@ -54,26 +82,25 @@ class CCADataCollector:
         features['network_stiffness'] = df['throughput'] * df['rtt']
         
         # Stability metrics (rolling standard deviation)
-        rolling_window = f"{self.window_size}T"
+        rolling_window = f"{self.window_size}min"
         for metric in ['rtt', 'throughput']:
+            # Handle non-monotonic index
             features[f'{metric}_stability'] = (
                 df[metric]
+                .sort_index()  # Ensure sorted index
                 .rolling(rolling_window, min_periods=10)
                 .std()
                 .fillna(0)
             )
         
-        # Application profile (0=bulk, 1=interactive)
+        # Application profile
         features['app_profile'] = (
             df['throughput']
-            .rolling('1T')
+            .sort_index()
+            .rolling('1min')
             .std()
             .apply(lambda x: 1 if x > 10 else 0)
         )
-        
-        # Time-based features
-        features['hour_of_day'] = df.index.hour
-        features['day_of_week'] = df.index.dayofweek
         
         return features.dropna()
 
@@ -98,7 +125,7 @@ class CCADataCollector:
         # Calculate 95th percentile RTT - min RTT in 5-minute windows
         df['bufferbloat'] = (
             df['rtt']
-            .rolling('5T')
+            .rolling('5min')
             .apply(lambda x: np.percentile(x, 95) - np.min(x) if len(x) > 10 else 0)
         )
         return df
@@ -106,6 +133,7 @@ class CCADataCollector:
     def generate_training_data(self, output_path="data/training_data.parquet"):
         """Full data generation pipeline"""
         try:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             print("Collecting raw metrics...")
             raw_df = self.get_raw_metrics()
             

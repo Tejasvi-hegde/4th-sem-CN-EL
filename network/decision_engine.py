@@ -5,7 +5,7 @@ import sys
 sys.path.append("/home/tejasvi/Desktop/CN EL 4th sem/")
 from pathlib import Path
 from typing import Dict, Optional
-from monitor import NetworkMonitor
+from network.monitor import NetworkMonitor
 from ml.inference import CCASelector
 import subprocess
 class DecisionEngine:
